@@ -3,6 +3,7 @@ import json
 import os
 import random
 import threading
+import time
 import tkinter as tk
 import tkinter.font as tkfont
 import urllib.request
@@ -138,6 +139,10 @@ if not ARCHIVO_PLAYLISTS.exists() and _ARCHIVO_ANTIGUO.exists():
     ARCHIVO_PLAYLISTS.write_bytes(_ARCHIVO_ANTIGUO.read_bytes())
 
 REP_NO, REP_LISTA, REP_UNA = 0, 1, 2
+
+# Cuánto tiempo se considera válido un enlace de audio ya resuelto
+# (los enlaces de YouTube caducan a las pocas horas).
+TTL_AUDIO = 2 * 3600
 
 MARCAS_NO_DISPONIBLE = (
     "private video", "deleted video", "unavailable video",
@@ -517,6 +522,14 @@ def leer_playlist(url):
 
     nombre = info.get("title") or "Nueva playlist"
     return str(nombre), pistas
+
+
+def resolver_audio(video_id):
+    """Pide a yt-dlp el enlace directo del audio de un video.
+    Es la parte lenta (1 a 4 segundos), por eso se hace por adelantado."""
+    url = f"https://www.youtube.com/watch?v={video_id}"
+    with yt_dlp.YoutubeDL({"format": "bestaudio/best", "quiet": True}) as ydl:
+        return ydl.extract_info(url, download=False)["url"]
 
 
 def descargar_cuadrada(video_id, tam):
@@ -1394,6 +1407,13 @@ class Reproductor:
         self.cache_portadas = {}
         self.cache_miniaturas = {}
         self.pool = ThreadPoolExecutor(max_workers=2)
+
+        # Precarga del audio de la siguiente canción
+        self.cache_audio = {}                  # video_id -> (enlace, momento)
+        self.pool_audio = ThreadPoolExecutor(max_workers=1)
+        self._precargando = set()              # ids que se están resolviendo
+        self._esperando = None                 # id que la canción actual espera
+        self._proxima_id = None                # id de la siguiente prevista
 
         self.instancia = vlc.Instance("--no-video")
         self.player = self.instancia.media_player_new()
@@ -2461,6 +2481,8 @@ class Reproductor:
         self.mensaje(
             "Aleatorio: " + ("activado" if self.aleatorio else "desactivado")
         )
+        if self.video_actual:
+            self._preparar_proxima()
 
     def alternar_repetir(self):
         self.repetir = (self.repetir + 1) % 3
@@ -2474,6 +2496,8 @@ class Reproductor:
         self.btn_repetir.set_icono(icono)
         self.btn_repetir.set_activo(self.repetir != REP_NO)
         self.mensaje(mensaje)
+        if self.video_actual:
+            self._preparar_proxima()
 
     def mensaje(self, texto, ms=2500):
         if self._msg_job:
@@ -2533,6 +2557,7 @@ class Reproductor:
         self.video_actual = video_id
         self.info_actual = (titulo, artista)
         self.caratula_ok = False
+        self._proxima_id = None
         self.reproducidas.add(video_id)
 
         self.lbl_titulo.config(text=ajustar(titulo, self.f_barra_titulo, 190))
@@ -2547,35 +2572,93 @@ class Reproductor:
         self._refrescar_play()
 
         threading.Thread(
-            target=self._audio_hilo, args=(video_id,), daemon=True
-        ).start()
-        threading.Thread(
             target=self._caratula_hilo, args=(video_id,), daemon=True
         ).start()
+        self._pedir_audio(video_id)
 
-    def _audio_hilo(self, video_id):
-        url = f"https://www.youtube.com/watch?v={video_id}"
+    # ----------------------------------------------------------
+    # Audio: resolución y precarga
+    # ----------------------------------------------------------
+    def _audio_fresco(self, video_id):
+        """Enlace de audio ya resuelto (y todavía válido), o None."""
+        dato = self.cache_audio.get(video_id)
+        if dato and time.time() - dato[1] < TTL_AUDIO:
+            return dato[0]
+        return None
 
-        try:
-            with yt_dlp.YoutubeDL({
-                "format": "bestaudio/best",
-                "quiet": True
-            }) as ydl:
-                resultado = ydl.extract_info(url, download=False)
-                audio = resultado["url"]
+    def _guardar_audio(self, video_id, url):
+        self.cache_audio[video_id] = (url, time.time())
+        # Se guardan pocos: se descartan los más antiguos.
+        while len(self.cache_audio) > 8:
+            mas_viejo = min(self.cache_audio, key=lambda k: self.cache_audio[k][1])
+            del self.cache_audio[mas_viejo]
 
-        except Exception as e:
-            if es_error_de_acceso(e):
-                self.root.after(
-                    0, lambda: self._omitir_no_disponible(video_id)
-                )
-            else:
-                self.root.after(
-                    0, lambda: self._fallo_temporal(video_id)
-                )
+    def _pedir_audio(self, video_id):
+        """Consigue el audio de la canción que se quiere oír ahora."""
+        url = self._audio_fresco(video_id)
+        if url:
+            # Ya estaba precargado: arranca al instante.
+            self._iniciar(video_id, url)
+        elif video_id in self._precargando:
+            # Se está resolviendo por adelantado: se espera ese resultado.
+            self._esperando = video_id
+        else:
+            self._precargando.add(video_id)
+            self._esperando = video_id
+            threading.Thread(
+                target=self._resolver_hilo, args=(video_id,), daemon=True
+            ).start()
+
+    def _precargar(self, video_id):
+        """Resuelve el audio de una canción en segundo plano."""
+        if self._audio_fresco(video_id) or video_id in self._precargando:
             return
+        self._precargando.add(video_id)
+        try:
+            self.pool_audio.submit(self._resolver_hilo, video_id)
+        except RuntimeError:
+            self._precargando.discard(video_id)
 
-        self.root.after(0, lambda: self._iniciar(video_id, audio))
+    def _resolver_hilo(self, video_id):
+        try:
+            url = resolver_audio(video_id)
+        except Exception as e:
+            permanente = es_error_de_acceso(e)
+            self.root.after(0, lambda: self._audio_fallo(video_id, permanente))
+            return
+        self.root.after(0, lambda: self._audio_listo(video_id, url))
+
+    def _audio_listo(self, video_id, url):
+        self._precargando.discard(video_id)
+        self._guardar_audio(video_id, url)
+        if self._esperando == video_id:
+            self._esperando = None
+            self._iniciar(video_id, url)
+
+    def _audio_fallo(self, video_id, permanente):
+        self._precargando.discard(video_id)
+        esperaba = self._esperando == video_id
+        if esperaba:
+            self._esperando = None
+
+        if permanente:
+            # Esa canción nunca se podrá reproducir: se omite.
+            self._omitir_no_disponible(video_id)
+            if not esperaba and self.video_actual:
+                # Era la siguiente prevista: se elige otra y se precarga.
+                self._preparar_proxima()
+        elif esperaba or video_id == self.video_actual:
+            self._fallo_temporal(video_id)
+
+    def _preparar_proxima(self):
+        """Decide cuál será la siguiente canción y deja su audio listo."""
+        self._proxima_id = None
+        i = self.elegir_siguiente(True)
+        if i is None:
+            return
+        pista = self.cola[i]
+        self._proxima_id = pista[1]
+        self._precargar(pista[1])
 
     def _fallo_temporal(self, video_id):
         if video_id == self.video_actual:
@@ -2622,6 +2705,7 @@ class Reproductor:
         self.pausado = False
         self.mensaje("", 0)
         self._refrescar_play(True)
+        self._preparar_proxima()
 
     def detener_todo(self):
         """Para la música y deja la barra inferior como nueva."""
@@ -2635,6 +2719,8 @@ class Reproductor:
         self.playlist_sonando = None
         self.historial.clear()
         self.reproducidas.clear()
+        self._proxima_id = None
+        self._esperando = None
 
         self.lbl_titulo.config(text="Ninguna canción")
         self.lbl_artista.config(text="")
@@ -2750,7 +2836,15 @@ class Reproductor:
         if not self.cola:
             return
 
-        destino = self.elegir_siguiente(auto)
+        destino = None
+        if self._proxima_id:
+            # La que ya se precargó (en aleatorio, la elegida al azar).
+            destino = next(
+                (k for k, p in enumerate(self.cola) if p[1] == self._proxima_id),
+                None
+            )
+        if destino is None:
+            destino = self.elegir_siguiente(auto)
 
         if destino is None:
             self.player.stop()
@@ -2869,6 +2963,12 @@ class Reproductor:
     def _cerrar(self):
         try:
             self.player.stop()
+            # Cancela lo que esté en cola para que el programa cierre rápido.
+            for pool in (self.pool_audio, self.pool, self.lista.pool):
+                try:
+                    pool.shutdown(wait=False, cancel_futures=True)
+                except Exception:
+                    pass
         finally:
             self.root.destroy()
 
