@@ -150,7 +150,6 @@ COL_NUM = 52
 COL_MINI = 52
 COL_ARTISTA = 200
 COL_DUR = 84
-COL_CORAZON = 44
 
 PALETA_PLAYLISTS = [
     "#6b4fd8", "#2f8f83", "#b0507a",
@@ -170,7 +169,6 @@ def carpeta_datos():
 
 ARCHIVO_PLAYLISTS = carpeta_datos() / "playlists.json"
 ARCHIVO_AJUSTES = carpeta_datos() / "ajustes.json"
-ARCHIVO_FAVORITOS = carpeta_datos() / "favoritos.json"
 
 # Si ya tenías un playlists.json junto al script, se copia una sola vez.
 _ARCHIVO_ANTIGUO = Path(__file__).resolve().with_name("playlists.json")
@@ -273,7 +271,6 @@ GLIFOS_FLUENT = {
     "volumen": "\uE767", "mudo": "\uE74F",
     "buscar": "\uE721", "reloj": "\uE121",
     "mas": "\uE712", "paleta": "\uE790", "abajo": "\uE70D",
-    "corazon": "\uEB51", "corazon_lleno": "\uEB52",
 }
 GLIFOS_SIMPLES = {
     "play": "▶", "pausa": "⏸",
@@ -283,7 +280,6 @@ GLIFOS_SIMPLES = {
     "volumen": "🔊", "mudo": "🔇",
     "buscar": "🔍", "reloj": "🕒",
     "mas": "⋯", "paleta": "🎨", "abajo": "▾",
-    "corazon": "♡", "corazon_lleno": "♥",
 }
 GLIFOS = GLIFOS_SIMPLES
 FUENTE_ICO = FUENTE_ICONOS
@@ -395,8 +391,6 @@ def tinte(rgb):
 
 
 def color_playlist(playlist):
-    if playlist.get("virtual"):
-        return ACENTO
     clave = (playlist.get("url") or playlist.get("nombre") or "").encode("utf-8")
     return PALETA_PLAYLISTS[zlib.crc32(clave) % len(PALETA_PLAYLISTS)]
 
@@ -413,7 +407,7 @@ def redondear(img, radio=14):
     return img
 
 
-def icono_nota(tam, color, radio=8, escala_nota=0.5, color_nota=(255, 255, 255, 235), simbolo="♪"):
+def icono_nota(tam, color, radio=8, escala_nota=0.5, color_nota=(255, 255, 255, 235)):
     """Cuadrado redondeado de color con una nota musical."""
     img = Image.new("RGBA", (tam, tam), (0, 0, 0, 0))
     dibujo = ImageDraw.Draw(img)
@@ -425,7 +419,7 @@ def icono_nota(tam, color, radio=8, escala_nota=0.5, color_nota=(255, 255, 255, 
             try:
                 fuente = ImageFont.truetype(nombre, int(tam * escala_nota))
                 dibujo.text(
-                    (tam / 2, tam / 2), simbolo, font=fuente,
+                    (tam / 2, tam / 2), "♪", font=fuente,
                     fill=color_nota, anchor="mm"
                 )
                 break
@@ -953,23 +947,19 @@ def config_columnas(frame):
     frame.grid_columnconfigure(1, minsize=COL_MINI)
     frame.grid_columnconfigure(2, weight=1)
     frame.grid_columnconfigure(3, minsize=COL_ARTISTA)
-    frame.grid_columnconfigure(4, minsize=COL_CORAZON)
-    frame.grid_columnconfigure(5, minsize=COL_DUR)
+    frame.grid_columnconfigure(4, minsize=COL_DUR)
 
 
 class FilaCancion:
     """Una fila reutilizable: # | miniatura + título | artista | duración."""
 
-    def __init__(self, padre, al_clic, f_titulo, f_texto,
-                 al_corazon=None, es_favorito=None):
+    def __init__(self, padre, al_clic, f_titulo, f_texto):
         self.indice = None
         self.video_id = None
         self.numero = 0
         self.sonando = False
         self.hover = False
         self.al_clic = al_clic
-        self.al_corazon = al_corazon
-        self.es_favorito = es_favorito
 
         self.marco = tk.Frame(padre, bg=FONDO, height=ALTO_FILA)
         self.marco.grid_propagate(False)
@@ -995,18 +985,7 @@ class FilaCancion:
         self.dur = tk.Label(
             self.marco, bg=FONDO, fg=TEXTO_SUAVE, font=f_texto, anchor="e"
         )
-        self.dur.grid(row=0, column=5, sticky="e", padx=(0, 16))
-
-        # El corazón no está en self.widgets: su clic no reproduce la
-        # canción, la marca o desmarca como «Me gusta».
-        self.corazon = tk.Label(
-            self.marco, bg=FONDO, fg=TEXTO_SUAVE,
-            font=(FUENTE_ICO, 12), cursor="hand2", width=3
-        )
-        self.corazon.grid(row=0, column=4, sticky="nsew")
-        self.corazon.bind("<Button-1>", self._clic_corazon)
-        self.corazon.bind("<Enter>", self._entrar)
-        self.corazon.bind("<Leave>", self._salir)
+        self.dur.grid(row=0, column=4, sticky="e", padx=(0, 16))
 
         self.widgets = [
             self.marco, self.num, self.miniatura,
@@ -1021,11 +1000,6 @@ class FilaCancion:
     def _clic(self, e=None):
         if self.indice is not None:
             self.al_clic(self.indice)
-
-    def _clic_corazon(self, e=None):
-        if self.indice is not None and self.al_corazon:
-            self.al_corazon(self.indice)
-        return "break"
 
     def _entrar(self, e=None):
         self.hover = True
@@ -1071,18 +1045,6 @@ class FilaCancion:
             )
         self.lbl_titulo.config(fg=ACENTO_HOVER if self.sonando else TEXTO)
 
-        me_gusta = bool(
-            self.es_favorito and self.video_id
-            and self.es_favorito(self.video_id)
-        )
-        self.corazon.config(bg=fondo)
-        if me_gusta:
-            self.corazon.config(text=glifo("corazon_lleno"), fg=ACENTO_HOVER)
-        elif self.hover:
-            self.corazon.config(text=glifo("corazon"), fg=TEXTO_SUAVE)
-        else:
-            self.corazon.config(text="")
-
     def estado(self, sonando, forzar=False):
         if not forzar and sonando == self.sonando:
             return
@@ -1118,13 +1080,10 @@ class ListaCanciones(tk.Frame):
     """Tabla con encabezado (#, Título, Artista, duración). Solo dibuja
     las filas visibles, así funciona igual con 20 que con 2000 canciones."""
 
-    def __init__(self, padre, al_reproducir, al_ordenar, cache=None,
-                 al_favorito=None, es_favorito=None):
+    def __init__(self, padre, al_reproducir, al_ordenar, cache=None):
         super().__init__(padre, bg=FONDO)
         self.al_reproducir = al_reproducir
         self.al_ordenar = al_ordenar
-        self.al_favorito = al_favorito
-        self.es_favorito = es_favorito
         self.pistas = []
         self.filas = []
         self.offset = 0
@@ -1175,7 +1134,7 @@ class ListaCanciones(tk.Frame):
             self.cab, text=glifo("reloj"), bg=FONDO, fg=TEXTO_SUAVE,
             font=(FUENTE_ICO, 10), cursor="hand2"
         )
-        self.h_dur.grid(row=0, column=5, sticky="e", padx=(0, 16))
+        self.h_dur.grid(row=0, column=4, sticky="e", padx=(0, 16))
 
         self.h_titulo.bind("<Button-1>", lambda e: self.al_ordenar("titulo"))
         self.h_artista.bind("<Button-1>", lambda e: self.al_ordenar("artista"))
@@ -1255,20 +1214,9 @@ class ListaCanciones(tk.Frame):
             self.filas.append(
                 FilaCancion(
                     self.vista, self.al_reproducir,
-                    self.f_titulo, self.f_texto,
-                    self._clic_corazon, self.es_favorito
+                    self.f_titulo, self.f_texto
                 )
             )
-
-    def _clic_corazon(self, indice):
-        if self.al_favorito and 0 <= indice < len(self.pistas):
-            self.al_favorito(self.pistas[indice])
-
-    def repintar_filas(self):
-        """Vuelve a dibujar los corazones de las filas visibles."""
-        for fila in self.filas:
-            if fila.indice is not None:
-                fila._pintar()
 
     def _dibujar(self):
         n = len(self.pistas)
@@ -1283,7 +1231,7 @@ class ListaCanciones(tk.Frame):
                 fila.indice = None
 
         ancho_titulo = max(
-            ancho - COL_NUM - COL_MINI - COL_ARTISTA - COL_CORAZON - COL_DUR - 28, 60
+            ancho - COL_NUM - COL_MINI - COL_ARTISTA - COL_DUR - 28, 60
         )
         ancho_artista = COL_ARTISTA - 16
 
@@ -1727,10 +1675,7 @@ class BarraLateral(tk.Frame):
         fila.pack_propagate(False)
 
         imagen = ImageTk.PhotoImage(
-            icono_nota(
-                36, color_playlist(playlist), 8, 0.5,
-                simbolo="♥" if playlist.get("virtual") else "♪"
-            )
+            icono_nota(36, color_playlist(playlist), 8, 0.5)
         )
         lbl_img = tk.Label(fila, image=imagen, bg=bg, bd=0)
         lbl_img.image = imagen
@@ -1815,15 +1760,6 @@ class Reproductor:
         self.playlist_sonando = None   # de la que sale la música
         self.cargar_playlists_guardadas()
 
-        # --- Favoritos: «Me gusta» es una playlist automática ---
-        self.me_gusta = {
-            "nombre": "Me gusta", "url": "", "pistas": [],
-            "no_disponibles": set(), "virtual": True
-        }
-        self.favoritos = []        # canciones con corazón (la última primero)
-        self.ids_favoritos = set()
-        self.cargar_favoritos()
-
         # --- Estado de reproducción ---
         self.pistas_originales = []    # canciones de la playlist mostrada
         self.pistas_vista = []         # esas mismas, ya filtradas y ordenadas
@@ -1895,7 +1831,9 @@ class Reproductor:
         root.protocol("WM_DELETE_WINDOW", self._cerrar)
 
         # Pantalla inicial
-        self._refrescar_lateral()
+        self.lateral.refrescar(
+            self.playlists, self.playlist_actual, self.playlist_sonando
+        )
         self._aplicar_estado_botones()
         self.player.audio_set_volume(self.volumen_guardado)
 
@@ -2044,9 +1982,7 @@ class Reproductor:
 
         self.lista = ListaCanciones(
             self.panel_lista, self.reproducir_fila, self.ordenar_por,
-            cache=self.cache_miniaturas,
-            al_favorito=self.alternar_favorito,
-            es_favorito=self.es_favorito
+            cache=self.cache_miniaturas
         )
         self.lista.pack(fill="both", expand=True, padx=(16, 8), pady=(0, 8))
 
@@ -2085,11 +2021,6 @@ class Reproductor:
             font=(FUENTE, 8), anchor="w"
         )
         self.estado.pack(fill="x")
-        self.btn_corazon = BotonIcono(
-            izq, "corazon", self.alternar_favorito_actual,
-            tam=14, fondo=PANEL
-        )
-        self.btn_corazon.pack(side="left", padx=(10, 0))
 
         # --- Centro: controles + progreso ---
         centro = tk.Frame(barra, bg=PANEL)
@@ -2456,96 +2387,6 @@ class Reproductor:
                 f"No se pudieron guardar las playlists:\n{e}"
             )
 
-    # ==========================================================
-    # FAVORITOS («Me gusta»)
-    # ==========================================================
-    def cargar_favoritos(self):
-        self.favoritos = []
-        try:
-            datos = json.loads(ARCHIVO_FAVORITOS.read_text(encoding="utf-8"))
-        except FileNotFoundError:
-            datos = []
-        except Exception:
-            # Archivo dañado: se guarda una copia antes de empezar de cero.
-            try:
-                ARCHIVO_FAVORITOS.replace(ARCHIVO_FAVORITOS.with_suffix(".bak"))
-            except OSError:
-                pass
-            datos = []
-        if not isinstance(datos, list):
-            datos = []
-
-        vistos = set()
-        for p in datos:
-            if (
-                isinstance(p, list) and len(p) >= 4
-                and p[0] and p[1] and str(p[1]) not in vistos
-            ):
-                vistos.add(str(p[1]))
-                self.favoritos.append(
-                    (str(p[0]), str(p[1]), str(p[2] or ""), p[3])
-                )
-        self.ids_favoritos = vistos
-
-    def guardar_favoritos(self):
-        try:
-            ARCHIVO_FAVORITOS.write_text(
-                json.dumps(
-                    [list(p) for p in self.favoritos],
-                    ensure_ascii=False, indent=2
-                ),
-                encoding="utf-8"
-            )
-        except Exception as e:
-            messagebox.showerror(
-                "Error", f"No se pudieron guardar los Me gusta:\n{e}"
-            )
-
-    def es_favorito(self, video_id):
-        return video_id in self.ids_favoritos
-
-    def _ids_no_disponibles(self):
-        """Canciones que no se pueden reproducir, en cualquier playlist."""
-        ids = set(self.me_gusta.get("no_disponibles", set()))
-        for p in self.playlists:
-            ids |= set(p.get("no_disponibles", set()))
-        return ids
-
-    def _pistas_me_gusta(self):
-        ocultas = self._ids_no_disponibles()
-        return [p for p in self.favoritos if p[1] not in ocultas]
-
-    def alternar_favorito(self, pista):
-        """Marca o desmarca una canción como «Me gusta»."""
-        video_id = pista[1]
-        if video_id in self.ids_favoritos:
-            self.favoritos = [p for p in self.favoritos if p[1] != video_id]
-            self.ids_favoritos.discard(video_id)
-            self.mensaje("Quitada de Me gusta")
-        else:
-            self.favoritos.insert(0, tuple(pista[:4]))
-            self.ids_favoritos.add(video_id)
-            self.mensaje("Añadida a Me gusta")
-        self.guardar_favoritos()
-        # Dentro de «Me gusta» la fila no desaparece al instante (así la
-        # lista no salta); se actualiza al volver a abrirla.
-        self.lista.repintar_filas()
-        self._refrescar_corazon_barra()
-
-    def alternar_favorito_actual(self):
-        """Corazón de la barra inferior: la canción que suena."""
-        if not self.video_actual:
-            return
-        pista = next((p for p in self.cola if p[1] == self.video_actual), None)
-        if pista is not None:
-            self.alternar_favorito(pista)
-
-    def _refrescar_corazon_barra(self):
-        activo = bool(self.video_actual) and self.es_favorito(self.video_actual)
-        self.btn_corazon.set_icono("corazon_lleno" if activo else "corazon")
-        self.btn_corazon.set_activo(activo)
-
-
     def _indice_de(self, playlist):
         """Posición de la playlist en la lista (compara por identidad)."""
         for i, p in enumerate(self.playlists):
@@ -2554,8 +2395,6 @@ class Reproductor:
         return None
 
     def pistas_disponibles_de_playlist(self, playlist):
-        if playlist.get("virtual"):
-            return self._pistas_me_gusta()
         no_disp = playlist.get("no_disponibles", set())
         return [
             pista for pista in playlist.get("pistas", [])
@@ -2564,8 +2403,7 @@ class Reproductor:
 
     def _refrescar_lateral(self):
         self.lateral.refrescar(
-            [self.me_gusta] + self.playlists,
-            self.playlist_actual, self.playlist_sonando
+            self.playlists, self.playlist_actual, self.playlist_sonando
         )
 
     # ==========================================================
@@ -2583,10 +2421,6 @@ class Reproductor:
         self.pildora.vaciar()
 
         self.lbl_nombre.config(text=cortar(playlist["nombre"], 30))
-        if playlist.get("virtual"):
-            self.btn_mas.pack_forget()   # «Me gusta» no se renombra ni se borra
-        else:
-            self.btn_mas.pack(side="left")
         self.panel_lista.tkraise()
         self._poner_portada_inicial(playlist)
         self.aplicar_vista()
@@ -2706,8 +2540,6 @@ class Reproductor:
         self.abrir_playlist(playlist)
 
     def mostrar_menu(self, playlist, x, y):
-        if playlist is not None and playlist.get("virtual"):
-            return
         if playlist is None:
             return
         menu = tk.Menu(
@@ -2923,8 +2755,6 @@ class Reproductor:
         if segundos:
             texto += f"  ·  {formato_total(segundos)}"
 
-        if self.playlist_actual is self.me_gusta and not self.pistas_originales:
-            texto = "Aún no hay canciones. Pulsa el corazón de una canción para añadirla"
         self.lbl_resumen.config(text=texto)
 
     # ==========================================================
@@ -3140,21 +2970,6 @@ class Reproductor:
         )
 
         playlist.setdefault("no_disponibles", set()).add(video_id)
-
-        if playlist.get("virtual"):
-            # Una canción de «Me gusta» que no se puede reproducir también
-            # se oculta en las playlists de donde viene.
-            for otra in self.playlists:
-                if any(p[1] == video_id for p in otra.get("pistas", [])):
-                    otra.setdefault("no_disponibles", set()).add(video_id)
-            if (
-                self.playlist_actual is not None
-                and self.playlist_actual is not playlist
-            ):
-                self.pistas_originales = self.pistas_disponibles_de_playlist(
-                    self.playlist_actual
-                )
-                self.aplicar_vista()
         self.guardar_playlists()
 
         self.cola = [p for p in self.cola if p[1] != video_id]
@@ -3214,8 +3029,6 @@ class Reproductor:
     def _playlist_guardada(self):
         """La playlist de la última vez (o None si ya no existe)."""
         clave = self.ajustes.get("ultima_playlist")
-        if clave == self.me_gusta["nombre"]:
-            return self.me_gusta
         if not clave:
             return None
         for p in self.playlists:
@@ -3546,8 +3359,6 @@ class Reproductor:
             self.lbl_t_tot.config(text=self.formato(self.player.get_length()))
 
         self._refrescar_play()
-
-        self._refrescar_corazon_barra()
 
         self._ticks += 1
         if self._ticks >= 10:
