@@ -2,7 +2,7 @@
 Añade FAVORITOS a tu reproductor:
   - un corazón en cada canción (aparece al pasar el mouse)
   - un corazón en la barra inferior para la canción que suena
-  - una playlist automática «Me gusta» (arriba en la barra lateral) que
+  - una playlist automática «Mis favoritos» (arriba en la barra lateral) que
     junta las canciones marcadas de TODAS tus playlists
 
 Uso (en la terminal de VS Code, dentro de la carpeta de tu proyecto):
@@ -25,6 +25,22 @@ ARCHIVO = Path(sys.argv[1] if len(sys.argv) > 1 else "reproductor.py")
 #   texto    -> reemplaza solo ese fragmento
 #   bloque   -> reemplaza un bloque exacto de varias líneas
 CAMBIOS = []
+
+
+# El corazón va a la izquierda del botón aleatorio (siempre visible aunque
+# se achique la ventana) y un espaciador invisible a la derecha de repetir
+# mantiene los controles centrados.
+CORAZON_CONTROLES = (
+    '        self.btn_corazon = BotonIcono(\n'
+    '            controles, "corazon", self.alternar_favorito_actual,\n'
+    '            tam=14, fondo=PANEL\n'
+    '        )\n'
+    '        self.btn_corazon.pack(side="left", padx=6)')
+ESPACIADOR_CONTROLES = (
+    '        tk.Label(\n'
+    '            controles, text=glifo("corazon"), font=(FUENTE_ICO, 14),\n'
+    '            bg=PANEL, fg=PANEL, padx=8, pady=4\n'
+    '        ).pack(side="left", padx=6)')
 
 
 def cambio(tipo, buscar, nuevo):
@@ -75,7 +91,7 @@ cambio("linea", "self.dur.grid(row=0, column=4",
        '        self.dur.grid(row=0, column=5, sticky="e", padx=(0, 16))\n'
        '\n'
        '        # El corazón no está en self.widgets: su clic no reproduce la\n'
-       '        # canción, la marca o desmarca como «Me gusta».\n'
+       '        # canción, la marca o desmarca como «Mis favoritos».\n'
        '        self.corazon = tk.Label(\n'
        '            self.marco, bg=FONDO, fg=TEXTO_SUAVE,\n'
        '            font=(FUENTE_ICO, 12), cursor="hand2", width=3\n'
@@ -150,9 +166,9 @@ cambio("texto", "cache=self.cache_miniaturas",
 # ----------------------------------------------- Reproductor: datos
 cambio("despues", "self.cargar_playlists_guardadas()",
        "\n"
-       "        # --- Favoritos: «Me gusta» es una playlist automática ---\n"
+       "        # --- Favoritos: «Mis favoritos» es una playlist automática ---\n"
        "        self.me_gusta = {\n"
-       '            "nombre": "Me gusta", "url": "", "pistas": [],\n'
+       '            "nombre": "Mis favoritos", "url": "", "pistas": [],\n'
        '            "no_disponibles": set(), "virtual": True\n'
        "        }\n"
        "        self.favoritos = []        # canciones con corazón (la última primero)\n"
@@ -177,7 +193,7 @@ cambio("bloque",
        "        )\n")
 
 FAVORITOS = '''    # ==========================================================
-    # FAVORITOS («Me gusta»)
+    # FAVORITOS («Mis favoritos»)
     # ==========================================================
     def cargar_favoritos(self):
         self.favoritos = []
@@ -218,7 +234,7 @@ FAVORITOS = '''    # ==========================================================
             )
         except Exception as e:
             messagebox.showerror(
-                "Error", f"No se pudieron guardar los Me gusta:\\n{e}"
+                "Error", f"No se pudieron guardar los favoritos:\\n{e}"
             )
 
     def es_favorito(self, video_id):
@@ -236,18 +252,18 @@ FAVORITOS = '''    # ==========================================================
         return [p for p in self.favoritos if p[1] not in ocultas]
 
     def alternar_favorito(self, pista):
-        """Marca o desmarca una canción como «Me gusta»."""
+        """Marca o desmarca una canción como «Mis favoritos»."""
         video_id = pista[1]
         if video_id in self.ids_favoritos:
             self.favoritos = [p for p in self.favoritos if p[1] != video_id]
             self.ids_favoritos.discard(video_id)
-            self.mensaje("Quitada de Me gusta")
+            self.mensaje("Quitada de Mis favoritos")
         else:
             self.favoritos.insert(0, tuple(pista[:4]))
             self.ids_favoritos.add(video_id)
-            self.mensaje("Añadida a Me gusta")
+            self.mensaje("Añadida a Mis favoritos")
         self.guardar_favoritos()
-        # Dentro de «Me gusta» la fila no desaparece al instante (así la
+        # Dentro de «Mis favoritos» la fila no desaparece al instante (así la
         # lista no salta); se actualiza al volver a abrirla.
         self.lista.repintar_filas()
         self._refrescar_corazon_barra()
@@ -276,7 +292,7 @@ cambio("despues", 'clave = self.ajustes.get("ultima_playlist")',
        '            return self.me_gusta')
 cambio("despues", 'self.lbl_nombre.config(text=cortar(playlist["nombre"], 30))',
        '        if playlist.get("virtual"):\n'
-       '            self.btn_mas.pack_forget()   # «Me gusta» no se renombra ni se borra\n'
+       '            self.btn_mas.pack_forget()   # «Mis favoritos» no se renombra ni se borra\n'
        '        else:\n'
        '            self.btn_mas.pack(side="left")')
 cambio("despues", "def mostrar_menu(self, playlist, x, y):",
@@ -285,7 +301,7 @@ cambio("despues", "def mostrar_menu(self, playlist, x, y):",
 cambio("despues", 'playlist.setdefault("no_disponibles", set()).add(video_id)',
        '\n'
        '        if playlist.get("virtual"):\n'
-       '            # Una canción de «Me gusta» que no se puede reproducir también\n'
+       '            # Una canción de «Mis favoritos» que no se puede reproducir también\n'
        '            # se oculta en las playlists de donde viene.\n'
        '            for otra in self.playlists:\n'
        '                if any(p[1] == video_id for p in otra.get("pistas", [])):\n'
@@ -298,12 +314,8 @@ cambio("despues", 'playlist.setdefault("no_disponibles", set()).add(video_id)',
        '                    self.playlist_actual\n'
        '                )\n'
        '                self.aplicar_vista()')
-cambio("despues", 'self.estado.pack(fill="x")',
-       '        self.btn_corazon = BotonIcono(\n'
-       '            izq, "corazon", self.alternar_favorito_actual,\n'
-       '            tam=14, fondo=PANEL\n'
-       '        )\n'
-       '        self.btn_corazon.pack(side="left", padx=(10, 0))')
+cambio("despues", "controles.pack(pady=(0, 2))", CORAZON_CONTROLES)
+cambio("despues", 'self.btn_repetir.pack(side="left", padx=6)', ESPACIADOR_CONTROLES)
 cambio("antes", "self._ticks += 1",
        "        self._refrescar_corazon_barra()\n")
 cambio("antes", "self.lbl_resumen.config(text=texto)",
@@ -336,6 +348,31 @@ def aplicar(texto):
     return texto
 
 
+def ajustar_existente(texto):
+    """Para archivos que ya tienen los Favoritos de una versión anterior."""
+    texto = (texto
+             .replace("No se pudieron guardar los Me gusta", "No se pudieron guardar los favoritos")
+             .replace("Quitada de Me gusta", "Quitada de Mis favoritos")
+             .replace("Añadida a Me gusta", "Añadida a Mis favoritos")
+             .replace("Me gusta", "Mis favoritos"))
+
+    # Corazón de la barra inferior: de junto al título a junto al aleatorio.
+    viejo = (
+        '        self.btn_corazon = BotonIcono(\n'
+        '            izq, "corazon", self.alternar_favorito_actual,\n'
+        '            tam=14, fondo=PANEL\n'
+        '        )\n'
+        '        self.btn_corazon.pack(side="left", padx=(10, 0))\n')
+    ancla1 = "        controles.pack(pady=(0, 2))\n"
+    ancla2 = '        self.btn_repetir.pack(side="left", padx=6)\n'
+    if (texto.count(viejo) == 1 and texto.count(ancla1) == 1
+            and texto.count(ancla2) == 1):
+        texto = texto.replace(viejo, "")
+        texto = texto.replace(ancla1, ancla1 + CORAZON_CONTROLES + "\n")
+        texto = texto.replace(ancla2, ancla2 + ESPACIADOR_CONTROLES + "\n")
+    return texto
+
+
 def main():
     if not ARCHIVO.exists():
         raise SystemExit(f"No encuentro {ARCHIVO}. Ejecútalo dentro de la carpeta de tu proyecto.")
@@ -345,7 +382,19 @@ def main():
     texto = crudo.replace("\r\n", "\n")
 
     if "COL_CORAZON" in texto:
-        raise SystemExit("Tu archivo ya tiene los Favoritos aplicados. No se cambió nada.")
+        # Ya tenía los Favoritos (versión anterior del script): solo ajustar.
+        actualizado = ajustar_existente(texto)
+        if actualizado == texto:
+            raise SystemExit("Tu archivo ya tiene los Favoritos aplicados. No se cambió nada.")
+        compile(actualizado, str(ARCHIVO), "exec")
+        copia = ARCHIVO.with_name("reproductor_antes_de_ajustar.py")
+        copia.write_bytes(crudo.encode("utf-8"))
+        if crlf:
+            actualizado = actualizado.replace("\n", "\r\n")
+        ARCHIVO.write_bytes(actualizado.encode("utf-8"))
+        print("Listo. Favoritos ajustados: nombre «Mis favoritos» y corazón junto al botón aleatorio.")
+        print(f"Copia de seguridad: {copia.name}")
+        return
 
     nuevo = aplicar(texto)
     compile(nuevo, str(ARCHIVO), "exec")   # comprueba que no quedó con errores
